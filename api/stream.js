@@ -12,47 +12,56 @@ export default async function handler(req, res) {
     }
 
     const since = new Date(Date.now() - parseInt(days, 10) * 24 * 60 * 60 * 1000);
-
     const base = "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed";
     const all = [];
 
-    // Fetch reporter posts
-    for (const handle of rpList) {
-      const url = new URL(base);
-      url.searchParams.set("actor", handle);
-      url.searchParams.set("limit", "50");
+    // Helper: fetch posts with pagination
+    async function fetchFor(handle) {
+      let cursor = "";
+      while (true) {
+        const url = new URL(base);
+        url.searchParams.set("actor", handle);
+        url.searchParams.set("limit", "50");
+        if (cursor) url.searchParams.set("cursor", cursor);
 
-      const r = await fetch(url);
-      if (!r.ok) continue;
-      const data = await r.json();
+        const r = await fetch(url.toString());
+        if (!r.ok) break;
+        const data = await r.json();
 
-      for (const it of data.feed || []) {
-        const post = it.post;
-        const created = new Date(post.indexedAt || 0);
-        if (created < since) continue;
+        const items = data.feed || [];
+        if (items.length === 0) break;
 
-        // Collect text: raw + facet text (handles, links, hashtags)
-        const rawText = post.record?.text || "";
-        const facetText = (post.record?.facets || [])
-          .map(f =>
-            (f.features || [])
-              .map(ft => {
-                if (ft?.uri) return ft.uri; // links, mentions
-                if (ft?.tag) return ft.tag; // hashtags
-                return "";
-              })
-              .join(" ")
-          )
-          .join(" ");
-        const text = (rawText + " " + facetText).toLowerCase();
+        for (const it of items) {
+          const post = it.post;
+          const created = new Date(post.indexedAt || 0);
+          if (created < since) return; // stop if too old
 
-        if (kwList.some(k => text.includes(k.toLowerCase()))) {
-          const rkey = post.uri.split("/").pop();
-          const postUrl = `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
-          all.push({ created, postUrl });
+          // Collect all possible text sources
+          const rawText = post.record?.text || "";
+          const facetText = (post.record?.facets || [])
+            .map(f =>
+              (f.features || [])
+                .map(ft => ft?.uri || ft?.tag || "")
+                .join(" ")
+            )
+            .join(" ");
+          const authorText = post.author?.handle || "";
+          const combinedText = (rawText + " " + facetText + " " + authorText).toLowerCase();
+
+          if (kwList.some(k => combinedText.includes(k.toLowerCase()))) {
+            const rkey = post.uri.split("/").pop();
+            const postUrl = `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
+            all.push({ created, postUrl });
+          }
         }
+
+        cursor = data.cursor;
+        if (!cursor) break;
       }
     }
+
+    // Fetch all reporters in parallel
+    await Promise.all(rpList.map(fetchFor));
 
     // Sort newest first
     all.sort((a, b) => b.created - a.created);
@@ -65,7 +74,7 @@ export default async function handler(req, res) {
     }
 
     const html =
-      `<!-- Bluesky stream | keywords: ${kwList.join(" | ")} | reporters: ${rpList.join(" | ")} -->\n` +
+      `<!-- Bluesky stream | keywords: ${kwList.join(" | ")} | reporters: ${rpList.join(" | ")} | generated: ${new Date().toISOString()} -->\n` +
       `<div class="bsky-stream">\n${blocks.join("\n")}\n</div>\n`;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
