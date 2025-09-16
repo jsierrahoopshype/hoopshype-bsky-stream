@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     if (kwList.length === 0 || rpList.length === 0) {
       return res
         .status(400)
-        .send("Usage: /api/stream?keywords=Kevin Durant,KD,Durant&reporters=duanerankin.bsky.social&days=7");
+        .send("Usage: /api/stream?keywords=Kobe Bufkin,Bufkin&reporters=mikeascotto.bsky.social&days=7");
     }
 
     const since = new Date(Date.now() - parseInt(days, 10) * 24 * 60 * 60 * 1000);
@@ -31,7 +31,21 @@ export default async function handler(req, res) {
         const created = new Date(post.indexedAt || 0);
         if (created < since) continue;
 
-        const text = post.record?.text?.toLowerCase() || "";
+        // Collect text: raw + facet text (handles, links, hashtags)
+        const rawText = post.record?.text || "";
+        const facetText = (post.record?.facets || [])
+          .map(f =>
+            (f.features || [])
+              .map(ft => {
+                if (ft?.uri) return ft.uri; // links, mentions
+                if (ft?.tag) return ft.tag; // hashtags
+                return "";
+              })
+              .join(" ")
+          )
+          .join(" ");
+        const text = (rawText + " " + facetText).toLowerCase();
+
         if (kwList.some(k => text.includes(k.toLowerCase()))) {
           const rkey = post.uri.split("/").pop();
           const postUrl = `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
