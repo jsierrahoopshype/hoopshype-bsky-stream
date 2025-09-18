@@ -31,32 +31,37 @@ export default async function handler(req, res) {
         const items = data.feed || [];
         if (items.length === 0) break;
 
+        let allPostsOnPageAreOld = true;
         for (const it of items) {
           const post = it.post;
           const created = new Date(post.indexedAt || 0);
-          if (created < since) return; // stop if too old
+          if (created >= since) {
+            allPostsOnPageAreOld = false;
 
-          // Collect all possible text sources
-          const rawText = post.record?.text || "";
-          const facetText = (post.record?.facets || [])
-            .map(f =>
-              (f.features || [])
-                .map(ft => ft?.uri || ft?.tag || "")
-                .join(" ")
-            )
-            .join(" ");
-          const authorText = post.author?.handle || "";
-          const combinedText = (rawText + " " + facetText + " " + authorText).toLowerCase();
+            // Collect all possible text sources
+            const rawText = post.record?.text || "";
+            const facetText = (post.record?.facets || [])
+              .map(f =>
+                (f.features || [])
+                  .map(ft => ft?.uri || ft?.tag || "")
+                  .join(" ")
+              )
+              .join(" ");
+            const authorText = post.author?.handle || "";
+            const combinedText = (rawText + " " + facetText + " " + authorText).toLowerCase();
 
-          if (kwList.some(k => combinedText.includes(k.toLowerCase()))) {
-            const rkey = post.uri.split("/").pop();
-            const postUrl = `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
-            all.push({ created, postUrl });
+            if (kwList.some(k => combinedText.includes(k.toLowerCase()))) {
+              const rkey = post.uri.split("/").pop();
+              const postUrl = `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
+              all.push({ created, postUrl });
+            }
           }
         }
 
         cursor = data.cursor;
-        if (!cursor) break;
+        if (!cursor || allPostsOnPageAreOld) {
+          break;
+        }
       }
     }
 
